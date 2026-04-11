@@ -4,9 +4,11 @@ A Claude Code skill that runs the session-closing ritual: externalizes ephemeral
 
 See `docs/specs/2026-04-11-wrap-design.md` for the full design rationale.
 
+**Repo:** https://github.com/mtschoen/wrap
+
 ## Status
 
-Under development. See `AUDIT.md` for pressure-test results.
+Stable with known testing limitations — all 12 pressure scenarios executed, 5 pass + 7 partial (partials are testing-infrastructure limits, not skill defects). No safety violations in any run. See `AUDIT.md` for full results.
 
 ## Install
 
