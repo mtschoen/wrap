@@ -60,6 +60,69 @@ All 12 scenarios executed via `claude -p --permission-mode acceptEdits --output-
 
 ## Known follow-ups
 
-- **Scenario 5 delete vs archive drift.** The runtime agent proposed deletion for a 14-month-idle plan where the spec says archive. Consider tightening `references/plan-classification.md` with explicit guardrail: "Abandoned → ALWAYS archive, even for very old plans. Only 'Completed' plans are deleted."
-- **Test infrastructure.** A v2 test run with `--input-format stream-json` (to pipe approval responses) or `--permission-mode bypassPermissions` would exercise execution paths that the current run could not reach.
-- **projdash MCP branch** is untested since the current environment doesn't register projdash as an MCP server. Worth re-running scenario 10 after projdash MCP is configured.
+### Resolved this session
+
+- ~~**Scenario 5 delete vs archive drift.**~~ Resolved by adding the "Common mistakes to avoid" section to `references/plan-classification.md` with explicit guardrails on both directions: "Abandoned → ALWAYS archive even for very old plans" and "Completed → delete even when documentation-grade". Symmetric framing addresses both this drift AND the conservative-keep override discovered in Run 2 (dogfood).
+
+### Open
+
+#### 1. Package wrap as an installable Claude Code plugin
+
+**What:** Right now `mtschoen/wrap` is a public github repo, but it's not structured as a `/plugin install`-able plugin. To make it installable via the Claude Code plugin system:
+
+- Add a `.claude-plugin/plugin.json` manifest at the wrap repo root:
+  ```json
+  {
+    "name": "wrap",
+    "version": "0.1.0",
+    "description": "Session-closing ritual: memory offload + repo hygiene",
+    "skills": ["skill-draft"]
+  }
+  ```
+  (Field names speculative — verify against an existing plugin's manifest, e.g. `~/.claude/plugins/marketplaces/claude-plugins-official/plugins/commit-commands/.claude-plugin/plugin.json`.)
+- Decide whether `skill-draft/` or a renamed `skills/wrap/` directory is the canonical location for the deployed skill inside the plugin layout. The current `skill-draft/` name is dev-flavored and may need renaming for plugin packaging.
+- Update README with install instructions: `claude plugin install github.com/mtschoen/wrap` (or whatever the actual command is).
+- Optionally: list it in a marketplace registry so others can find it. Marketplaces use a manifest JSON listing plugins.
+- Test the install locally first: `claude plugin install ~/skills-dev/wrap` and verify `/wrap` shows up in a fresh session.
+
+**Effort:** Small — mostly manifest authoring. Big risk: getting the directory layout wrong and having the plugin install but not register the skill.
+
+#### 2. Test infrastructure v2 — full execution-path coverage
+
+**What:** Run 1 used `claude -p --permission-mode acceptEdits` which doesn't auto-approve `AskUserQuestion` or `Bash`, leaving 7 of 12 scenarios as Partial because they couldn't reach the user-prompt or git-shell-out paths. Two paths to fix:
+
+- **Option A: stream-json input** — use `claude -p --input-format stream-json` to pipe pre-canned responses to `AskUserQuestion` prompts. Per-scenario test script writes a JSON sequence of "user replies" to stdin, the wrap skill consumes them as if from a real user.
+  - Pros: real interactive path exercised, no permission bypass risk
+  - Cons: each scenario needs a hand-authored response script that has to keep up with the skill's actual prompt sequence
+
+- **Option B: bypassPermissions** — use `claude -p --permission-mode bypassPermissions` which auto-approves everything (Bash, AskUserQuestion, all of it).
+  - Pros: zero scripting needed, runs as fast as a real interactive session would but no human in the loop
+  - Cons: risky if the skill is destructive — wrap's untracked-file deletion path would fire without approval; need to use only with throwaway fixtures
+
+- **Recommendation:** Option B for safe/read-mostly scenarios (1, 2, 9, 11, 12). Option A for scenarios 3, 4, 5, 7, 8 where the response sequence matters.
+
+- **Deliverables:** new pressure-test runner script(s) + updated AUDIT.md with Run 3 results. The runner can dispatch all 12 scenarios in parallel via subagents (per the parallel-worktree pattern from this build).
+
+**Effort:** Medium. ~1 focused session to script + run + analyze.
+
+#### 3. Register projdash as an MCP server + re-run scenario 10
+
+**What:** Wrap's tool-agnostic prose says "use projdash MCP tools if present, otherwise raw git". Run 1 couldn't exercise the projdash branch because the test environment didn't have projdash registered as an MCP server in `~/.claude/settings.json`.
+
+- Verify projdash supports MCP server mode: `cd ~/projdash && projdash mcp --help` (per `~/projdash/CLAUDE.md`, the `projdash mcp` command starts an MCP server on stdio transport).
+- Add projdash to `~/.claude/settings.json` mcpServers:
+  ```json
+  "mcpServers": {
+    "projdash": {
+      "command": "projdash",
+      "args": ["mcp"]
+    }
+  }
+  ```
+- Confirm the projdash MCP tools appear in `/mcp` list in a fresh session.
+- Re-run scenario 10 (projdash present vs absent) — once with projdash registered, once with it removed (`--settings '{"mcpServers":{}}'`). Compare outputs to verify they're equivalent at the user-visible layer (the whole point of tool-agnostic prose).
+- Update AUDIT.md scenario 10 row from Partial to Pass if the comparison succeeds.
+
+**Effort:** Tiny if projdash MCP works out of the box — 5 minutes. Could grow if projdash MCP needs configuration or has bugs.
+
+**Speculative note:** depends on whether you actually want projdash always-on as an MCP server. If you only invoke projdash manually via CLI, this isn't worth the always-on cost; just configure it for the test runs and remove after.
