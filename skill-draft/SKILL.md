@@ -109,15 +109,15 @@ The `Wrap-Session-Id:` trailer lets future tooling distinguish wrap commits from
 
 **User work (commit #2, prompted).** Uncommitted changes that existed *before* wrap started. After wrap's own commit lands, show `git status` + `git log @{u}..HEAD` and ask the user per repo:
 
-> `(c)ommit + push / (c)ommit only / (s)tash / (l)eave as-is / (b)ranch-off-and-commit`
+> `(p)ush (commit + push) / (c)ommit only / (s)tash / (l)eave as-is / (b)ranch-off-and-commit`
 
 Rules for this prompt:
 
 - Never pick an option for the user.
-- Never push without the explicit `(c)ommit + push` choice.
+- Never push without the explicit `(p)ush` choice.
 - Never force-push. If the push is rejected as non-fast-forward, report "push rejected, commits stay local" and continue.
 - `(b)ranch-off-and-commit` creates a new branch from current HEAD, commits there, leaves `main`/the original branch untouched.
-- If there is no upstream, `(c)ommit + push` degrades to `(c)ommit only` for that repo; inform the user.
+- If there is no upstream, `(p)ush` degrades to `(c)ommit only` for that repo; inform the user.
 
 ### Phase 3 — Session summary
 
