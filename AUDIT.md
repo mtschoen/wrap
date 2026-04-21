@@ -58,6 +58,16 @@ All 12 scenarios executed via `claude -p --permission-mode acceptEdits --output-
 
 **Status:** Pass. Skill behaved as designed end-to-end in real interactive use.
 
+## Run 5 — 2026-04-20 (validating fix)
+
+Re-ran scenario 14 with the post-fix skill (commit `66362f5`) against the same fixture that tripped 14b. Goal: verify the Phase 1b wording changes close the silent-discard gap.
+
+| # | Scenario | Status | Evidence | Notes |
+|---|---|---|---|---|
+| 14 (v3) | Subagent loose thread (post-fix) | **Pass** | [14c-subagent-loose-thread-v3.md](docs/evidence/14c-subagent-loose-thread-v3.md) | Agent front-loaded TaskOutput at wrap start, scanned the completed subagent's output, surfaced offload proposal via AskUserQuestion with three destinations. Under bypass (user "declines"), the summary transparently reports the surfaced-then-declined outcome — no silent discard. Fix validated. |
+
+**Run 5 summary:** 1 pass / 0 partial / 0 fail. Fix confirmed. Scenario 13 wasn't re-run (changes to 1b are additive w.r.t. running-shell behavior, and 13b's tool trace already covered the uniform TaskStop path).
+
 ## Run 4 — 2026-04-20 (redesigned 13/14)
 
 Scenarios 13 and 14 re-run after redesign (`python sleep 600` instead of `sleep 180` for 13; real `src/fetcher.py` with organic subagent analysis for 14). Captured with `--output-format stream-json` so the tool trace is auditable, not just the agent's narrative. Run against commit `55a4139` (Phase 1b initial wording pre-fix).
