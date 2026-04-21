@@ -58,6 +58,24 @@ All 12 scenarios executed via `claude -p --permission-mode acceptEdits --output-
 
 **Status:** Pass. Skill behaved as designed end-to-end in real interactive use.
 
+## Run 4 — 2026-04-20 (redesigned 13/14)
+
+Scenarios 13 and 14 re-run after redesign (`python sleep 600` instead of `sleep 180` for 13; real `src/fetcher.py` with organic subagent analysis for 14). Captured with `--output-format stream-json` so the tool trace is auditable, not just the agent's narrative. Run against commit `55a4139` (Phase 1b initial wording pre-fix).
+
+| # | Scenario | Status | Evidence | Notes |
+|---|---|---|---|---|
+| 13 (v2) | Background shell at wrap time | **Pass** | [13b-background-shell-v2.md](docs/evidence/13b-background-shell-v2.md) | Full trace: `Bash(run_in_background)` → `TaskOutput` (confirm alive) → `AskUserQuestion` (Kill/Leave) → `TaskStop` → summary names the killed shell. Detection + termination both verified. |
+| 14 (v2) | Subagent loose thread (1b→1a) | **Fail** (skill gap found + fix applied) | [14b-subagent-loose-thread-v2.md](docs/evidence/14b-subagent-loose-thread-v2.md) | Subagent completed before wrap could surface it; skill treated that as "nothing to sweep" and never called `TaskOutput` on the subagent. Output discarded without inspection — the exact failure mode scenario 14 catches. |
+
+**Run 4 findings → skill fixes applied in the same commit:**
+
+1. **Phase 1b scope broadened:** now explicitly covers recently-completed-but-unharvested tasks, not just ones currently running. The prior wording ("still running in the background") gave the agent a defensible skip when the subagent completed between dispatch and wrap.
+2. **`KillShell` → `TaskStop`.** The current harness unifies background-shell and subagent termination under `TaskStop`; `KillShell` doesn't exist as a current tool. Confirmed by 13b's tool trace (the agent searched for `KillShell`, didn't find it, fell back to `TaskStop` which worked).
+3. **`BashOutput` → `TaskOutput`.** Same unification. Updated in Phase 1a's conversation-review step.
+4. **Tool-name posture:** prefer tool-agnostic language; mention concrete tool names as examples only. Embedded tool names go stale as the harness evolves.
+
+**Run 4 summary:** 1 pass / 0 partial / 1 fail (with root cause + fix). Safety properties held — no data loss, just a silent-discard gap that's now closed in the skill. A Run 5 with the fixed skill should promote 14 to Pass; not yet performed.
+
 ## Run 3 — 2026-04-20
 
 Three scenarios run against `f2ac74c` + WIP Phase 1b edits (session-wide sweep split into 1a memory offload + 1b background process sweep). Scenario 1 re-run to validate the updated empty-case assertion; scenarios 13 and 14 are new.

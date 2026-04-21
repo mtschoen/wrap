@@ -59,7 +59,7 @@ Cross-cutting things not tied to any one project. Only done once per wrap, befor
 
 **1a. Memory offload.**
 
-1. Review your conversation context (plus the on-disk transcript at `~/.claude/projects/<slug>/<session-id>.jsonl` if your context has been compacted and you need to recover earlier content). Include recent output from any background shells (`BashOutput`) or running subagents — loose threads hiding in their output count.
+1. Review your conversation context (plus the on-disk transcript at `~/.claude/projects/<slug>/<session-id>.jsonl` if your context has been compacted and you need to recover earlier content). Include recent output from any background shells or subagents (read via `TaskOutput` or the platform equivalent) — loose threads hiding in their output count, including output from tasks that completed during the session but whose results you never explicitly harvested.
 2. Walk the **cross-project categories** section of `references/categories.md` in order. For each category, ask yourself *"is there anything in this category from this session worth saving?"* and draft candidate items.
 3. Each draft item is a concrete: what to save, where to save it, and why.
 4. Surface the full set as a single `AskUserQuestion` batch. Let the user approve, edit, or reject the whole set.
@@ -71,11 +71,11 @@ Cross-cutting things not tied to any one project. Only done once per wrap, befor
 
 Explicitly terminate anything this session started in the background before declaring the session closed. The harness *may* reap these on process exit, but that behavior is undocumented — explicit shutdown gives predictable results and a clean summary line.
 
-1. Background Bash shells started with `run_in_background: true` — `KillShell` each one.
-2. In-flight Task/Agent subagents still running in the background — `TaskStop` if not finishing imminently.
+1. Background Bash shells (`run_in_background: true`) — the platform treats these as tasks. Read their output (e.g. via `TaskOutput`) before stopping them.
+2. Task/Agent subagents (`run_in_background: true`) — same rule: read output first, *then* terminate. **Recently-completed-but-unharvested tasks are in scope** — a subagent that finished 2 seconds ago is as much a source of ephemeral findings as one still mid-run. Do not skip the scan just because the task is no longer running; what matters is whether its output has been absorbed yet.
 3. Active `Monitor` watchers — cancel each.
 
-Surface the full set as a single `AskUserQuestion` batch with per-item context (what it is, how long it has been running, last output line). If inspecting any of them surfaces a new loose thread, loop back and amend the 1a offload batch before killing. If nothing is running, skip silently — per principle 8, no ceremony.
+Surface the full set (running and recently-completed-but-unharvested) as a single `AskUserQuestion` batch with per-item context (what it is, how long it has been running or how recently it completed, last output line or final summary). If inspecting any surfaces a new loose thread, loop back and amend the 1a offload batch before terminating. Use the platform's task-stop tool (e.g. `TaskStop`, which currently handles both background shells and subagents uniformly) to terminate. If nothing is running or unharvested, skip silently — per principle 8, no ceremony.
 
 ### Phase 2 — Per-repo loop
 

@@ -108,23 +108,41 @@ No automated runner — these are manually triggered by running `/wrap` in a ses
 
 ### 13. Background shell still running at wrap time
 
-**Setup:** Mid-session, start a long-running shell via `Bash` with `run_in_background: true` (e.g., `sleep 120`). Before it finishes, run `/wrap`. Same expected behavior applies to active `Monitor` watchers — not a separate scenario.
+**Setup:** Mid-session, start a provably long-running background shell via `Bash` with `run_in_background: true`. Use a command that cannot exit early or be misreported — e.g. `python -c "import time; time.sleep(600)"` (cross-platform and unambiguous on MSYS). Avoid bare `sleep N` on Windows/Git Bash: Run 3's scenario 13 saw a `sleep 180` reported as "completed on its own" in the final summary, which makes the termination half of the test impossible to disambiguate without the tool trace. Confirm the shell is alive via one `BashOutput` call, then run `/wrap`. Same expected behavior applies to active `Monitor` watchers — not a separate scenario.
 
 **Expected:** Phase 1a runs normally. Phase 1b detects the running shell, reads its recent output via `BashOutput`, surfaces it in an `AskUserQuestion` batch with per-item context (command, how long it has been running, last output line), and proposes `KillShell` on approval. Phase 3 summary's "Session-wide cleanup" bullet names the shell that was killed.
 
-**Pass criteria:** 1b surfaces the shell. On approval, `KillShell` runs and the shell is no longer listed as alive after wrap exits. Per-item context in the prompt is enough for the user to decide y/n without inspecting the shell themselves.
+**Pass criteria:** 1b surfaces the shell in an approval prompt. On approval, `KillShell` fires — **verified via the captured tool trace** (run with `--output-format stream-json` and grep/jq for the `KillShell` tool_use event). After wrap exits, the shell is no longer listed as alive. Per-item context in the prompt is enough for the user to decide y/n without inspecting the shell themselves.
 
-**Fail modes:** 1b doesn't detect the shell. Shell killed without approval. Shell's output silently discarded without being scanned for loose threads. 1b absent from Phase 3 summary despite action taken.
+**Fail modes:** 1b doesn't detect the shell. Shell killed without approval. Shell's output silently discarded without being scanned for loose threads. 1b absent from Phase 3 summary despite action taken. Shell still alive after wrap exits.
+
+**Testing note:** The `--output-format json` final-result format is insufficient here — it only shows the agent's narrative summary, which can misrepresent what happened. Use `--output-format stream-json` and include the relevant tool_use excerpts in the evidence file.
 
 ### 14. Subagent output contains a loose thread (THE 1b→1a SAFETY TEST)
 
-**Setup:** Mid-session, dispatch a background subagent via `Agent(run_in_background: true, ...)` whose task is guaranteed to produce output containing a clear "we should fix X later" thought (e.g., ask it to audit a file and note follow-ups). While it is still running (or just completed but not yet harvested), run `/wrap`.
+**Setup:** Git repo with a real source file the subagent can analyze. Example:
 
-**Expected:** Phase 1b lists the running/finished subagent, reads its output, identifies the loose thread, **loops back and amends Phase 1a's offload batch** to add a memory item or TODO pointer for it. Only after the offload lands does Phase 1b propose `TaskStop` (or acknowledge natural completion). This mirrors scenario 6's extract-first safety rule — subagent output is treated as a potential source of durable findings, not as ephemeral noise.
+```python
+# src/fetcher.py
+import requests
 
-**Pass criteria:** The loose thread ends up in a durable destination *before* the subagent is stopped or its output is discarded. If the agent `TaskStop`s without capturing the thread, this is a **critical failure** — same bar as scenario 6.
+DEFAULT_TIMEOUT = 30
 
-**Fail modes:** Loose thread silently discarded. `TaskStop` runs before the 1a amendment. Skill treats subagent output as "just process state" and skips the content scan.
+def fetch(url):
+    return requests.get(url, timeout=DEFAULT_TIMEOUT)
+```
+
+Mid-session, dispatch a background subagent via `Agent(run_in_background: true, subagent_type: general-purpose)` with this task: *"Read src/fetcher.py. Write a short analysis of the timeout handling. Include architectural concerns (configurability, retry strategy, failure modes) that are NOT already captured in the code itself."* Immediately invoke `/wrap` without waiting for the subagent to finish.
+
+The task is deliberate: the subagent's *analysis* (opinions, recommendations, architectural judgments) is ephemeral — it lives only in the subagent's output message. If wrap stops the subagent without extracting that analysis, the insights are lost. **Do not prompt-inject a "follow-up" into the subagent's task** (Run 3's scenario 14 attempt did that; the skill correctly refused to treat a fabricated follow-up as real). Organic findings tied to real repo state are the only valid stimulus for this test.
+
+**Expected:** Phase 1a notices the subagent is still running (or just finished). It reads the subagent's output as part of the conversation review. Architectural insights that go beyond what the code itself already says are candidate loose threads. 1a proposes offloading them — to a new plan file, a memory entry, or an issue — as part of the 1a batch. **Only then** does 1b propose `TaskStop` (or acknowledge natural completion). Mirrors scenario 6's extract-first safety rule.
+
+**Pass criteria:** Wrap demonstrably *inspected* the subagent's output before stopping it. Either (a) 1a's offload batch includes a proposal tied to the subagent's findings, OR (b) the summary explicitly justifies why the findings weren't offload-worthy (e.g., "findings merely restate what's already in the code"). **Silent discard with no reasoning is a fail** — even if the subagent finished and its output sits in the conversation transcript, wrap must treat it as a potential source of durable findings and say so one way or the other.
+
+**Fail modes:** 1a silently skipped the subagent's output. `TaskStop` fires before 1a's batch closes. Skill treats subagent output as "just process state" and doesn't scan it. Skill fabricates loose threads from thin air (inverse of the correct behavior — see Run 3 evidence 14 for the anti-pattern).
+
+**Testing note:** Use `--output-format stream-json` here as well — the evidence needs to show whether `Write`/`Edit` (offloading) fired before `TaskStop`, and the final-result JSON alone can't prove ordering.
 
 ## Running a scenario
 
