@@ -37,9 +37,13 @@ The session-closing ritual for a Claude Code session. Performs two equally-manda
 
 8. **No items, no ceremony.** Each phase only runs its `AskUserQuestion` batch when its research has surfaced actual candidates. If a phase finds nothing, skip the prompt and continue. If *all* phases find nothing — including Phase 0's scope detection landing on a fully clean state — go straight to Phase 3 with a terse "nothing to wrap" summary. **Do not invent items out of nothing just to have something to do.** That is an explicit failure mode (see scenario 1 in `docs/pressure-scenarios.md`). Empty sweeps are a pass condition, not a problem to work around. Idempotent re-runs and clean-state invocations both look the same: detect nothing, summarize nothing, exit.
 
+9. **Orchestrator retains override authority.** Parts of Phase 2 fan out to per-repo sonnet subagents to keep verbose tool output (file reads, status walls, plan-file contents) out of main context. The orchestrator (this conversation) is still in charge: it may at any time read repo contents directly, bypass a subagent's draft, or pull per-repo work back into main context if subagent output feels thin, suspicious, or incomplete. Subagents are an optimization, not a delegation contract. The judgment-heavy work — deciding what's worth saving, reviewing drafts, assembling user-approval batches, writing the final summary — stays with the orchestrator.
+
 ## Procedure
 
 Wrap runs four phases in strict sequence (0 → 1 → 2 → 3) — but they are independently fault-tolerant. A failure in phase N does not undo phases 1..N-1, and (for most failures) does not abort phases N+1..last. Phase 3 (the summary) always runs, even after cancellation or failure.
+
+The orchestrator runs Phases 0, 1, 2a, and 2d directly. Phases 2b and 2c fan out to per-repo subagents (see "Subagent dispatch" below). Phase 3 stitches subagent fragments together with the orchestrator's cross-repo narrative.
 
 ### Phase 0 — Detect scope
 
@@ -55,7 +59,7 @@ Determine which repos the session touched. In order of precedence:
 
 ### Phase 1 — Session-wide sweep
 
-Cross-cutting things not tied to any one project. Only done once per wrap, before the per-repo loop. Two sub-phases: memory offload, then background process sweep.
+Cross-cutting things not tied to any one project. Only done once per wrap, before per-repo work begins. Two sub-phases: memory offload, then background process sweep. Both run in the orchestrator's main context — they are intrinsically conversation-bound and don't benefit from subagent isolation.
 
 **1a. Memory offload.**
 
@@ -77,32 +81,53 @@ Explicitly terminate anything this session started in the background before decl
 
 Surface the full set (running and recently-completed-but-unharvested) as a single `AskUserQuestion` batch with per-item context (what it is, how long it has been running or how recently it completed, last output line or final summary). If inspecting any surfaces a new loose thread, loop back and amend the 1a offload batch before terminating. Use the platform's task-stop tool (e.g. `TaskStop`, which currently handles both background shells and subagents uniformly) to terminate. If nothing is running or unharvested, skip silently — per principle 8, no ceremony.
 
-### Phase 2 — Per-repo loop
+This sweep does *not* terminate the wrap subagents dispatched in Phase 2; those are part of the wrap and finish on their own.
 
-For each touched repo in the Phase 0 list, in order, run sub-phases 2a→2b→2c→2d. Finish one repo before starting the next.
+### Phase 2 — Per-repo work
 
-Per-repo independence rule: if any sub-phase fails partway through a repo, record the failure in the running Phase 3 summary, skip remaining sub-phases for *that* repo (especially never push if commit failed), and continue to the next repo. Do not abort the whole wrap.
+Phase 2 covers per-repo memory offload (2a), plans sweep (2b), hygiene pass (2c), and the per-repo commit/push prompt (2d). The orchestrator does 2a directly across all touched repos. 2b and 2c fan out to per-repo sonnet subagents (with a bucketing cap). The orchestrator reviews their findings, runs one combined `AskUserQuestion` batch, and either executes inline or dispatches sonnet executors. 2d returns to the orchestrator for the user-facing commit prompt.
 
-**2a. Per-repo memory offload.**
+**Per-repo independence rule:** if any sub-phase fails partway through a repo, record the failure in the running Phase 3 summary, skip remaining sub-phases for *that* repo (especially never push if commit failed), and continue to the next repo. Do not abort the whole wrap.
 
-Walk the **per-project categories** section of `references/categories.md` for this specific repo. Draft candidate items — project learnings, decisions, CLAUDE.md updates, gotchas. Surface as a batch, get approval, execute.
+**Skip-fan-out option:** If a repo's expected 2b/2c work is trivially small (e.g. one or two files, no plans, no scratch), the orchestrator may skip the subagent dispatch and do 2b/2c inline. Subagent dispatch has fixed first-turn cost; for tiny work it can exceed the savings. Use judgment.
 
-**2b. Plans / specs sweep.**
+**2a. Per-repo memory offload (orchestrator, all repos sequentially).**
 
-Follow `references/plan-classification.md`:
+For each repo in the Phase 0 list, walk the **per-project categories** section of `references/categories.md` and draft candidate items in the orchestrator's main context — project learnings, decisions, CLAUDE.md updates, gotchas. This step has no verbose tool output: it is recall-driven drafting against the conversation context already loaded. Subagent isolation buys nothing here, and the nuance cost of fanning it out outweighs the savings.
 
-1. Scan all usual plan locations in the repo.
-2. Classify each plan file as completed / superseded / abandoned / in-progress / draft.
-3. **Extract loose threads from every plan being removed, before removing it.** This is non-negotiable.
-4. After extraction is approved and executed, apply the action-per-state table: delete tracked+stale outright, ask-with-bias-to-delete for untracked, archive abandoned, keep in-progress and drafts.
+The 2a drafts are not yet executed or shown to the user. Hold them in working memory; they are combined with 2b/2c findings before the AskUserQuestion batch in the per-repo review step below. The drafts are also passed into each subagent's brief as cross-reference material so subagents don't duplicate them.
 
-**2c. Hygiene pass.**
+**2b + 2c. Plans sweep + hygiene pass (per-repo subagents).**
 
-Follow `references/hygiene-checklist.md`. For each item in the checklist, research candidate findings, surface them with evidence + recommendation + action-on-approval, batch-approve, execute.
+After 2a is complete for all touched repos, dispatch per-repo subagents (model: sonnet) to do 2b and 2c work in their own contexts. Each subagent reads `references/plan-classification.md` and `references/hygiene-checklist.md` on demand — those references are not loaded into the orchestrator's context.
+
+**Bucketing.** Cap at 4 subagents to avoid first-turn cache-miss overhead. The most-edited repo (where the bulk of the session's work happened) gets its own subagent. Remaining repos are bucketed by weight; a subagent assigned multiple light repos still wins on cost because it does the verbose tool work in its own context, just sequentially across its assigned repos.
+
+**Brief structure.** The Agent tool's prompt is the only channel from orchestrator to subagent. Load it with session-grounded pointers rather than expecting the subagent to rediscover them. A few sharp pointers beats an exhaustive briefing — too much in the prompt dilutes attention.
+
+For each subagent (per repo or per bucket), the prompt should include:
+
+1. **Why this repo is in scope** — one sentence from the orchestrator's recall, e.g. *"This session refactored the auth middleware and added two new test files; that's why this repo is in the wrap."*
+2. **Pre-flagged hotspots** — specific files, plan paths, or directories the orchestrator already half-noticed and wants the subagent to look at first, e.g. *"Pay particular attention to `plans/auth-rewrite.md` (likely completed this session), the untracked `notes/scratch-2.md` (looks like loose-thread material), and check whether `CLAUDE.md` mentions the deprecated `validateSession` helper — we removed it."* This is the "leading content" that converts the subagent from "explore cold" to "verify these specific suspicions and surface anything else nearby."
+3. **2a drafts already produced for this repo** — so the subagent can cross-reference and not duplicate, e.g. *"The orchestrator has already drafted these per-project memory items: [list]. If your 2b/2c findings overlap, flag the duplication rather than re-drafting."*
+4. **What to do** — *"Follow `references/plan-classification.md` for 2b and `references/hygiene-checklist.md` for 2c. Return findings (not actions) — the orchestrator will assemble the user-approval batch and dispatch executors after approval."*
+5. **Return schema** — match `references/finding-schema.md`. Also include a short repo-level summary fragment (commits expected, plans found by state, hygiene findings count) for Phase 3 to stitch into the final summary.
+
+**Review and combine.** When subagents return, the orchestrator reviews each subagent's findings against its own knowledge of the session. This is the natural choke point where opus's judgment earns its keep:
+
+- *"Did the subagent miss something I noticed during the session?"* — if yes, add it.
+- *"Is this finding actually worth surfacing, or is it noise?"* — drop noise.
+- *"Does this classification feel right given how the session actually went?"* — override if not.
+
+If a subagent's findings feel thin, generic, or wrong, the orchestrator may bypass them entirely (principle 9): read the repo directly, do 2b/2c inline for that repo, and produce its own findings. This is a first-class option, not an emergency escape.
+
+After review, combine 2a drafts + reviewed 2b/2c findings into one `AskUserQuestion` batch per repo (or batched across repos if total volume is small). Get approval.
+
+**Execution.** After approval, execution can stay in the orchestrator (small/single-repo cases) or fan back out to sonnet executor subagents (large or multi-repo cases). Executors receive the approved findings + their `action_on_approval` strings, and report what they actually did. Auto-commit (commit #1 in 2d) happens in the repo where the writes landed, regardless of who executed them.
 
 Critical: destructive actions in 2c gate on 2a + 2b having completed successfully for this repo. If memory offload or plans sweep failed or was cancelled, skip 2c's destructive items too (still show the read-only summary in the final report).
 
-**2d. Commit + push decision.**
+**2d. Commit + push decision (orchestrator).**
 
 This sub-phase produces **two separate commits** (at most) per repo, in this order: first wrap's own edits auto-commit, then the user-work prompt runs. Never combine them — they must be distinguishable in git history.
 
@@ -133,13 +158,17 @@ Rules for this prompt:
 
 ### Phase 3 — Session summary
 
-Always runs, even on cancel or abort. Produce a short natural-language summary covering:
+Always runs, even on cancel or abort. Subagents return short repo-level summary fragments as part of their Phase 2 output (commits made, plans closed, hygiene findings, leftovers per repo); the orchestrator stitches the fragments together and adds the cross-repo narrative no individual subagent has the context to write — the session's overall arc, what's still hanging across repos, what feels worth flagging for next time.
 
-- **Accomplishments per repo:** commits made this session, files touched, plans closed, loose threads captured.
+The summary covers:
+
+- **Accomplishments per repo:** commits made this session, files touched, plans closed, loose threads captured. (Subagent fragments slot in here.)
 - **Memory offload totals:** how many entries written, to which destinations (grouped by memory type).
 - **Session-wide cleanup:** background shells killed, subagents stopped, monitors cancelled (counts + one line each). Omit the bullet entirely if 1b found nothing.
 - **Rejected or flagged:** anything the agent surfaced that the user declined, and anything explicitly flagged as needing human judgment.
 - **Leftovers:** per-repo, what is still dirty, unpushed, or in-progress after the wrap. Naming each explicitly so the user can decide whether to come back to it.
+
+Spot-check before publishing: cross-reference subagent fragments against `git log` and the actual state on disk. Subagents occasionally over-claim what they accomplished; an opus pass to verify "did the subagent actually do what it reported?" is part of the summary's quality. If a discrepancy turns up, correct the summary and note the discrepancy.
 
 Keep the summary terse — specific numbers, specific paths, specific decisions. No filler.
 
@@ -149,8 +178,10 @@ Keep the summary terse — specific numbers, specific paths, specific decisions.
 
 - **Phase independence:** failure in phase N leaves phases 1..N-1 intact and continues to phase N+1. Phase 3's summary records what completed and what didn't.
 - **Per-repo independence inside Phase 2:** repo-level failures are logged and wrap moves to the next repo.
+- **Subagent failure / timeout:** treat as "no findings for this bucket." The orchestrator may fall back to doing 2b/2c directly for the affected repos (principle 9), or skip with a note in the Phase 3 summary. Never silently lose a repo from the wrap.
+- **Subagent over-claim:** if Phase 3's spot-check finds a subagent reported a commit / write / deletion that didn't actually happen, correct the summary and execute the missing action inline if still appropriate.
 - **Destructive-action gate:** deletes and archives run only after memory offload succeeds for that repo.
-- **User cancel (`Ctrl+C` / stop):** whatever was already approved + executed stays done. Print a "cancelled — completed: X / pending: Y" summary immediately.
+- **User cancel (`Ctrl+C` / stop):** whatever was already approved + executed stays done. Print a "cancelled — completed: X / pending: Y" summary immediately. Cancellation also stops any in-flight subagents — wrap does not leave wrap-spawned subagents running after the user cancels.
 - **Git errors:**
   - Merge conflict on wrap's auto-commit → stash wrap's edits, leave user work alone, record the conflict in the summary.
   - Non-fast-forward push rejection → never force-push; report and continue.
@@ -161,9 +192,9 @@ Keep the summary terse — specific numbers, specific paths, specific decisions.
 ## References
 
 - `references/categories.md` — memory-offload category checklist for Phases 1 and 2a.
-- `references/plan-classification.md` — plan-file classifier + the extract-loose-threads-first safety rule for Phase 2b.
-- `references/hygiene-checklist.md` — Phase 2c items with research notes per check.
-- `references/finding-schema.md` — the shape of a finding and of the summary's action log (copied from `project-maintenance`, divergence OK).
+- `references/plan-classification.md` — plan-file classifier + the extract-loose-threads-first safety rule for Phase 2b. Loaded by the per-repo subagent that handles 2b, not by the orchestrator.
+- `references/hygiene-checklist.md` — Phase 2c items with research notes per check. Loaded by the per-repo subagent that handles 2c.
+- `references/finding-schema.md` — the shape of a finding and of the summary's action log (copied from `project-maintenance`, divergence OK). Loaded by both orchestrator and subagents.
 - `references/session-end-reminder.md` — spec for the decoupled `SessionEnd` nudge hook. Wrap does not read or touch the hook's marker file; it is a separate system.
 
 ## Companion scripts
