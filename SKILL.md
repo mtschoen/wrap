@@ -59,13 +59,13 @@ Before scoping or sweeping anything, scan the conversation for asks the user mad
 
 ### Phase 1 — Detect scope
 
-Determine which repos the session touched. In order of precedence:
+Determine which repos the session touched. The repo containing the cwd at the time `/wrap` was invoked is **implicitly in scope** — the user ran the slash command from there with intent, even if the session never edited a file in it. Phase 1's recall then determines what *additional* repos beyond the cwd were touched. In order of precedence:
 
-1. **Recall.** Review the conversation and list every path you edited, created, or ran git commands against. This is the primary source of truth.
-2. **Dirty-scan cross-check.** For each recalled path (and its parent repos), check whether the working tree is dirty or has unpushed commits. Use whatever dirty-detection tooling is available — if `projdash` MCP tools are present, use them; otherwise run `git status` and `git log @{u}..HEAD` directly.
+1. **Recall.** Review the conversation and list every path you edited, created, or ran git commands against. This is the primary source of truth for *additional* repos beyond the cwd.
+2. **Dirty-scan cross-check.** For each recalled path plus the cwd (and their parent repos), check whether the working tree is dirty or has unpushed commits. Use whatever dirty-detection tooling is available — if `projdash` MCP tools are present, use them; otherwise run `git status` and `git log @{u}..HEAD` directly.
 3. **Confirm with the user.** Present the detected repo list as a single batch via `AskUserQuestion`: *"I'll wrap these repos: [list]. Add or remove any?"*
 
-**Not in scope:** Repos the session only *read*. Reading is not touching.
+**Not in scope:** Repos the session only *read*, other than the cwd. Reading is not touching, but the cwd is treated as in-scope regardless of whether the session edited it.
 
 **Output of Phase 1:** An ordered list of touched-repo roots. Store it in working memory for Phases 2–4.
 
@@ -102,6 +102,8 @@ Phase 3 covers per-repo memory offload (3a), plans sweep (3b), hygiene pass (3c)
 **Per-repo independence rule:** if any sub-phase fails partway through a repo, record the failure in the running Phase 4 summary, skip remaining sub-phases for *that* repo (especially never push if commit failed), and continue to the next repo. Do not abort the whole wrap.
 
 **Skip-fan-out option:** If a repo's expected 3b/3c work is trivially small (e.g. one or two files, no plans, no scratch), the orchestrator may skip the subagent dispatch and do 3b/3c inline. Subagent dispatch has fixed first-turn cost; for tiny work it can exceed the savings. Use judgment.
+
+When taking the inline path, the orchestrator MUST still load the relevant references — `Read references/plan-classification.md` before doing 3b inline, and `Read references/hygiene-checklist.md` before doing 3c inline. The references contain the per-state action tables and the "Common mistakes to avoid" sections that per-repo subagents would otherwise load on their own; skipping the read recreates the conservative-keep drift those sections were added to prevent.
 
 **3a. Per-repo memory offload (orchestrator, all repos sequentially).**
 
@@ -162,11 +164,12 @@ The `Wrap-Session-Id:` trailer lets future tooling distinguish wrap commits from
 
 Rules for this prompt:
 
+- **All five options must be presented.** Do not drop options based on the agent's judgment of applicability — surface them and let the user decide. The user may have a use case the agent doesn't see (e.g., starting a branch off `main` for speculative follow-up work).
 - Never pick an option for the user.
 - Never push without the explicit `(p)ush` choice.
 - Never force-push. If the push is rejected as non-fast-forward, report "push rejected, commits stay local" and continue.
 - `(b)ranch-off-and-commit` creates a new branch from current HEAD, commits there, leaves `main`/the original branch untouched.
-- If there is no upstream, `(p)ush` degrades to `(c)ommit only` for that repo; inform the user.
+- If there is no upstream, `(p)ush` degrades to `(c)ommit only` for that repo; inform the user in the option's description rather than omitting it.
 
 ### Phase 4 — Session summary
 

@@ -178,41 +178,17 @@ Phase 0 was added as an Outstanding-asks check (fork: finish-first / wrap-with-h
 
 ### Resolved earlier sessions
 
-- ~~**Scenario 5 delete vs archive drift.**~~ Resolved by adding the "Common mistakes to avoid" section to `references/plan-classification.md` with explicit guardrails on both directions: "Abandoned → ALWAYS archive even for very old plans" and "Completed → delete even when documentation-grade". Symmetric framing addresses both this drift AND the conservative-keep override discovered in Run 2 (dogfood). **Run 6 revealed this fix doesn't bind when the orchestrator does 3b inline without loading the reference — see Open #4.**
+- ~~**Scenario 5 delete vs archive drift.**~~ Resolved by adding the "Common mistakes to avoid" section to `references/plan-classification.md` with explicit guardrails on both directions: "Abandoned → ALWAYS archive even for very old plans" and "Completed → delete even when documentation-grade". Symmetric framing addresses both this drift AND the conservative-keep override discovered in Run 2 (dogfood). **Run 6 revealed this fix doesn't bind when the orchestrator does 3b inline without loading the reference — addressed by Resolved #4 below.**
+
+### Resolved this session (Run 6 follow-ups)
+
+- ~~**0. Phase 1 cwd-implicit-in-scope clarification.**~~ Resolved by adding a lead sentence in `SKILL.md` Phase 1: *"The repo containing the cwd at the time `/wrap` was invoked is implicitly in scope... Phase 1's recall then determines what *additional* repos beyond the cwd were touched."* Closes the Run 6 sc 1/11/13 variance and retires Open #6 (sc 11 setup) automatically.
+
+- ~~**4. Phase 3b orchestrator-inline must load `plan-classification.md`.**~~ Resolved by adding a paragraph after the Skip-fan-out option: *"When taking the inline path, the orchestrator MUST still load the relevant references — `Read references/plan-classification.md` before doing 3b inline, and `Read references/hygiene-checklist.md` before doing 3c inline."* Closes the Run 6 sc 6 archive-drift recurrence.
+
+- ~~**5. Phase 3d AskUserQuestion missing `(b)ranch-off-and-commit` option.**~~ Resolved by adding a Phase 3d rule: *"All five options must be presented. Do not drop options based on the agent's judgment of applicability."* Plus an updated rule for the no-upstream case: *"inform the user in the option's description rather than omitting it."* Closes the Run 6 sc 2 finding.
 
 ### Open
-
-#### 0. Phase 1 cwd-implicit-in-scope clarification (Run 6 finding)
-
-**What:** `SKILL.md` Phase 1 says repos are in scope only if "edited, created, or ran git commands against." Run 6 showed agent variance — sometimes the cwd is treated as in scope (sc 1), sometimes not (sc 11, 13). The user invokes `/wrap` from somewhere with intent; that cwd should be implicitly in scope.
-
-**Fix:** add to Phase 1: *"The repo containing the cwd at the time `/wrap` is invoked is implicitly in scope. Phase 1's recall step then determines what *additional* repos beyond the cwd were touched."*
-
-**Effort:** tiny — one sentence in `SKILL.md` Phase 1.
-
-#### 4. Phase 3b orchestrator-inline must load `plan-classification.md` (Run 6 finding)
-
-**What:** when the orchestrator does Phase 3b inline (skip-fan-out for trivial volumes), it doesn't currently load `references/plan-classification.md`. That reference contains the per-state action table and the "Common mistakes to avoid" section that fixes the conservative-keep drift. Without the reference loaded, the orchestrator operates on `SKILL.md` prose alone and falls back to defensive choices (e.g., archive instead of delete for Completed-tracked plans, as in Run 6 scenario 6).
-
-**Fix:** add to `SKILL.md` Phase 3b: *"When the orchestrator does 3b inline (skip-fan-out), it MUST still `Read references/plan-classification.md` first — the per-state action table and 'Common mistakes' section are required."*
-
-**Effort:** tiny — one sentence in `SKILL.md` Phase 3b.
-
-#### 5. Phase 3d AskUserQuestion missing `(b)ranch-off-and-commit` option (Run 6 finding)
-
-**What:** Run 6 scenario 2 showed Phase 3d's AskUserQuestion offered 4 options (`Push`, `Commit only`, `Stash`, `Leave as-is`) but the SKILL.md spec lists 5 — the `(b)ranch-off-and-commit` path was dropped. The plain-text fallback also omitted it.
-
-**Fix:** decide whether the spec should require all 5 unconditionally or explicitly document which drops are acceptable. Currently the prose is ambiguous. If conditional, codify the heuristic (e.g., "drop branch-off when on `main` with no parallel work").
-
-**Effort:** small — one or two paragraphs in `SKILL.md` Phase 3d, depending on which direction is chosen.
-
-#### 6. Pressure-scenario 11 setup needs a touch (Run 6 finding)
-
-**What:** scenario 11 currently expects Phase 3c to flag `build-once.ps1` for deletion while preserving `keep-me.ps1` (KEEP marker). Under Phase 1's strict "touched-repo" rule, a session that *only* invokes `/wrap` doesn't put the repo in scope, so Phase 3c never engages. (See Run 6 scenario 11 evidence.)
-
-**Fix:** either (a) update scenario 11's prompt to first edit something in the repo (e.g., README typo), then `/wrap`; OR (b) implement the Phase 1 fix in Open #0 (cwd implicitly in scope), which retires this issue automatically.
-
-**Effort:** tiny — one prompt update in `docs/pressure-scenarios.md`, or rely on the #0 fix.
 
 #### 7. Multi-repo Phase 0 fork — future scenario candidate (Run 6 deferral)
 
