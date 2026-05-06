@@ -1,6 +1,6 @@
 # Plan Classification
 
-How to classify plan files during Phase 2b (plans sweep), and the safety rule that must precede any deletion.
+How to classify plan files during Phase 3b (plans sweep), and the safety rule that must precede any deletion.
 
 ## Where to look
 

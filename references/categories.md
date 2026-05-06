@@ -1,8 +1,8 @@
 # Memory Offload Categories
 
-The checklist the agent walks during Phase 1 (session-wide offload) and Phase 2a (per-repo offload). For each category, the agent asks itself *"is there anything in this category from this session?"* and proposes items if so.
+The checklist the agent walks during Phase 2 (session-wide offload) and Phase 3a (per-repo offload). For each category, the agent asks itself *"is there anything in this category from this session?"* and proposes items if so.
 
-## Cross-project categories (Phase 1 only)
+## Cross-project categories (Phase 2 only)
 
 These are handled once per wrap invocation, not per repo.
 
@@ -35,9 +35,9 @@ Patterns that apply to multiple projects — tool behaviors, language gotchas, b
 - **Destination:** `~/.claude/projects/.../memory/` (pick the closest existing type — feedback / reference / user).
 - **Example:** "on Windows, git rename defaults to master; rename to main immediately".
 
-## Per-project categories (Phase 2a only)
+## Per-project categories (Phase 3a only)
 
-These run once per touched repo inside Phase 2's loop.
+These run once per touched repo inside Phase 3's loop.
 
 ### Learnings about a codebase
 
@@ -85,4 +85,4 @@ Things that went wrong during the session that future agents should avoid.
 
 Uncommitted changes discussed but not finished.
 
-- **Destination:** commit as WIP or stash with a descriptive note. Decided in Phase 2d (commit decision).
+- **Destination:** commit as WIP or stash with a descriptive note. Decided in Phase 3d (commit decision).

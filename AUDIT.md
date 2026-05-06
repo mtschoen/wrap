@@ -98,6 +98,10 @@ Three scenarios run against `f2ac74c` + WIP Phase 1b edits (session-wide sweep s
 
 **Run 3 summary:** 1 pass / 2 partial / 0 fail. No safety violations, no data loss. Detection works; the destructive half of 1b and the 1b→1a feedback loop both need scenario redesigns to be exercised end-to-end.
 
+## Phase numbering changed (2026-05-05)
+
+Phase 0 was added as an Outstanding-asks check (fork: finish-first / wrap-with-handoff / drop). The old phases shifted by 1: old Phase 0 (scope detect) → Phase 1; old Phase 1 (session-wide sweep, with sub-phases 1a/1b) → Phase 2 (with 2a/2b); old Phase 2 (per-repo loop, 2a/2b/2c/2d) → Phase 3 (3a/3b/3c/3d); old Phase 3 (summary) → Phase 4. Run logs above this note (Runs 1–5) reference the **pre-shift** numbering and should be read against the SKILL.md as it existed at those run-cited commits. Future runs use the new numbering as documented in the current `SKILL.md`.
+
 ## Known follow-ups
 
 ### Resolved this session
