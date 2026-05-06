@@ -58,6 +58,78 @@ All 12 scenarios executed via `claude -p --permission-mode acceptEdits --output-
 
 **Status:** Pass. Skill behaved as designed end-to-end in real interactive use.
 
+## Run 6 — 2026-05-06 (post-Phase-0 validation)
+
+Eight scenarios run against the post-Phase-0 skill (commit `06f9680` — Phase 0 outstanding-asks check + scenarios 15/16, installed at `~/.claude/skills/wrap/`). Goal: validate the new Phase 0 fork mechanism (scenario 15's three branches + scenario 16's anti-fabrication floor) and sanity-check that the phase renumber didn't break the existing Phase 1–4 paths.
+
+All runs use `claude -p --permission-mode bypassPermissions --output-format stream-json --verbose`. Total cost: **$6.51** across 8 sessions.
+
+| # | Scenario | Status | Evidence | Notes |
+|---|---|---|---|---|
+| 1 | Clean repo | **Pass** | [run6-01-clean-repo.md](docs/evidence/run6-01-clean-repo.md) | Phase 0 silently skipped. Empty-case path emitted directly. 4 turns, $0.43. |
+| 2 | Dirty + unpushed | **Partial** | [run6-02-dirty-unpushed.md](docs/evidence/run6-02-dirty-unpushed.md) | Phase 3d commit prompt fired but missing the `(b)ranch-off-and-commit` option (4 listed of 5 spec'd). Phase 4 not reached because user input required (bypass declined the 4-option AskUserQuestion). |
+| 6 | Loose thread in stale plan (CRITICAL) | **Pass** with drift | [run6-06-loose-thread.md](docs/evidence/run6-06-loose-thread.md) | Critical safety property held: extracted both loose threads to `follow-ups.md` BEFORE moving the source plan. Drift: Completed-tracked plan was archived (`git mv` to `docs/specs/completed/`) instead of deleted — same conservative-keep instinct flagged in Run 2 dogfood, recurring because the orchestrator did 3b inline without loading `references/plan-classification.md`. |
+| 11 | `.claude/scripts/` mixed | **Partial** (test design) | [run6-11-claude-scripts.md](docs/evidence/run6-11-claude-scripts.md) | Agent correctly applied Phase 1's "touched-repo" rule and excluded the cwd from scope (session edited nothing). Phase 3c never engaged. Scenario fixture/prompt needs to make the session touch the repo first. |
+| 13 | Background shell at wrap time | **Pass** | [run6-13-background-shell.md](docs/evidence/run6-13-background-shell.md) | Trace verified: `Bash(run_in_background)` → `TaskOutput` (alive) → `AskUserQuestion` (Stop/Leave) → `TaskStop` → summary names killed task. Phase 2b under post-renumber prose works identically to 13b under pre-renumber. |
+| 15a | Finish first branch | **Pass** | [run6-15a-finishfirst.md](docs/evidence/run6-15a-finishfirst.md) | Wrap exited at Phase 0, no commits, no memory writes, no handoff files, task-1 edit preserved uncommitted. Agent skipped the AskUserQuestion when the user pre-stated the branch — see analysis. |
+| 15b | Wrap with handoff branch | **Pass** | [run6-15b-handoff.md](docs/evidence/run6-15b-handoff.md) | **The fork mechanism evidence.** AskUserQuestion fired with the exact 3 options in spec order before any Phase 1 tool call. Bypass declined the 3-option fork; agent inferred handoff from user's "don't start tasks 2 or 3" intent. `HANDOFF.md` written, wrap commit landed (`def5bcd`). |
+| 15c | Wrap, drop the rest branch | **Pass** | [run6-15c-droprest.md](docs/evidence/run6-15c-droprest.md) | Tasks NOT externalized (no `Write` for plan/memory). "Dropped tasks" section appears in Phase 4 summary as a discrete category, separate from leftovers/rejected. |
+| 16 | Borderline kvetch (anti-fabrication) | **Pass** | [run6-16-kvetch.md](docs/evidence/run6-16-kvetch.md) | No Phase 0 fork prompt for the kvetch. Summary explicitly classifies the rewrite remark as venting, not commitment. Agent invoked the `pushback` skill on the kvetch (incidental finding — clean composition with wrap). |
+
+**Run 6 summary: 6 pass / 3 partial / 0 fail.** Every "partial" is either a test-infrastructure constraint (bypass-mode AskUserQuestion behavior with 3+ options) or a known scenario design issue (s11's touched-repo gate). No safety property was violated; no destructive action without user input.
+
+### Phase 0 fork mechanism — fully validated
+
+- **Fork prompt fires with exactly 3 options in skill order** (`Finish first`, `Wrap with handoff`, `Wrap, drop the rest`) — verified in 15b's tool trace at event 6.
+- **Phase 0 → Phase 1 ordering invariant holds.** AskUserQuestion at event 6 precedes Phase 1's `git status` at event 7. No git/Bash hits the repo before the fork resolves.
+- **All three branches exercised:**
+  - *Finish first:* exit immediately, no commits, no memory, no handoff files. Task edit preserved.
+  - *Wrap with handoff:* unfinished tasks externalized to `HANDOFF.md` with concrete content; wrap commit names the destination.
+  - *Wrap, drop the rest:* tasks NOT externalized but listed in Phase 4 summary's "Dropped tasks" section.
+- **Anti-fabrication floor holds.** Scenario 16's kvetch did not surface as a fork item; the agent classified it correctly as venting.
+
+### Bypass-mode AskUserQuestion behavior — infrastructure finding
+
+| Option count | Bypass behavior |
+|---|---|
+| 2 (e.g., 13's Stop/Leave) | First option auto-selected |
+| 3+ (e.g., Phase 0 fork, 14c's destinations, Phase 3d 4-option commit prompt) | Question is declined; agent must default from prior context |
+
+This asymmetry means the Phase 3d commit prompt and the Phase 0 fork cannot be exhaustively exercised under `bypassPermissions`. To explicitly drive any non-default branch, scripted responses via `--input-format stream-json` are required (Option A from the existing test-infrastructure follow-up). For the fork specifically, Run 6 worked around this by framing the user's prompt to bias the agent's decline-fallback toward each branch — sufficient to validate each branch's *execution* given the choice.
+
+### New findings opened by Run 6
+
+#### 1. Phase 3b orchestrator-inline path needs to load `plan-classification.md`
+
+**Evidence:** scenario 6 trace shows no `Read` of `references/plan-classification.md`. The orchestrator chose the inline-3b path (skip-fan-out) because there was only one plan file. Without the reference loaded, it operated on `SKILL.md` prose alone — which describes plan classification but doesn't reproduce the per-state action table or the "Common mistakes" warning. The agent fell back to a conservative "archive to `docs/specs/completed/`" choice rather than the spec-mandated delete.
+
+**Proposed fix:** add one sentence to `SKILL.md` Phase 3b: *"When the orchestrator does 3b inline (skip-fan-out), it MUST still `Read references/plan-classification.md` first — the per-state action table and 'Common mistakes' section are required."*
+
+This is the same drift Run 2 dogfood caught and the "Common mistakes to avoid" section was added to address. The fix landed in the reference file but doesn't bind when the reference isn't loaded.
+
+#### 2. Phase 3d AskUserQuestion is missing the `(b)ranch-off-and-commit` option
+
+**Evidence:** scenario 2 trace shows the AskUserQuestion has 4 options (`Push`, `Commit only`, `Stash`, `Leave as-is`); the spec has 5 (`(b)ranch-off-and-commit` is listed). The plain-text fallback after decline also dropped `(b)`. The agent appears to have judged branch-off as not applicable when the user is on `main` with no parallel work.
+
+**Proposed fix:** sharpen `SKILL.md` Phase 3d to either require all 5 options unconditionally, or explicitly document which option drops are acceptable. Current prose is permissive enough to allow drops, which weakens the spec.
+
+#### 3. Phase 1 "touched-repo" gate produces inconsistent agent behavior
+
+**Evidence:** scenarios 1, 11, 13 all started with a clean cwd that the session never edited. In scenario 1 the agent ran a defensive `git status` and considered the repo in scope; in scenarios 11 and 13 the agent declared the repo not in scope and skipped Phase 3 entirely. Same prompt, different decision — this is interpretation variance, not a clear-cut rule.
+
+**Proposed fix:** add a clarifying sentence to `SKILL.md` Phase 1: *"The repo containing the cwd at the time `/wrap` is invoked is implicitly in scope (the user invoked `/wrap` *from* somewhere). Phase 1's recall step then determines what *additional* repos beyond the cwd were touched."* This makes the cwd implicit-in-scope, which matches user expectation when running `/wrap`.
+
+**Knock-on effect on scenario 11:** with the fix above, scenario 11's existing setup (cwd-only, no edits) would correctly engage Phase 3c. Without the fix, scenario 11 needs a setup change to make the session edit something first.
+
+### Decision on adding new scenarios (per audit-run-6 plan)
+
+The audit was triggered by an open question: *"do we need scenarios 17/18 to cover Phase 0 edge cases?"* Run 6 evidence:
+
+- **Gap A (explicit-deferral gray zone):** *partially closed.* Scenarios 15a v2 and 15c showed the agent correctly inferring branches from "I'll keep working" vs. "I've changed my mind" cues. Judgment is intact under the current prose. A dedicated scenario would tighten coverage but isn't urgent.
+- **Gap B (multi-repo unfinished asks):** *not exercised.* Run 6 only ran single-repo scenarios. Worth keeping on the list as a future scenario 17.
+
+**Recommendation:** do NOT add scenarios 17/18 in this session. Run 6 covered the priority items and surfaced concrete prose fixes. Re-evaluate after the three new findings above have been addressed; multi-repo Phase 0 testing remains a future-Run target.
+
 ## Run 5 — 2026-04-20 (validating fix)
 
 Re-ran scenario 14 with the post-fix skill (commit `66362f5`) against the same fixture that tripped 14b. Goal: verify the Phase 1b wording changes close the silent-discard gap.
@@ -104,11 +176,51 @@ Phase 0 was added as an Outstanding-asks check (fork: finish-first / wrap-with-h
 
 ## Known follow-ups
 
-### Resolved this session
+### Resolved earlier sessions
 
-- ~~**Scenario 5 delete vs archive drift.**~~ Resolved by adding the "Common mistakes to avoid" section to `references/plan-classification.md` with explicit guardrails on both directions: "Abandoned → ALWAYS archive even for very old plans" and "Completed → delete even when documentation-grade". Symmetric framing addresses both this drift AND the conservative-keep override discovered in Run 2 (dogfood).
+- ~~**Scenario 5 delete vs archive drift.**~~ Resolved by adding the "Common mistakes to avoid" section to `references/plan-classification.md` with explicit guardrails on both directions: "Abandoned → ALWAYS archive even for very old plans" and "Completed → delete even when documentation-grade". Symmetric framing addresses both this drift AND the conservative-keep override discovered in Run 2 (dogfood). **Run 6 revealed this fix doesn't bind when the orchestrator does 3b inline without loading the reference — see Open #4.**
 
 ### Open
+
+#### 0. Phase 1 cwd-implicit-in-scope clarification (Run 6 finding)
+
+**What:** `SKILL.md` Phase 1 says repos are in scope only if "edited, created, or ran git commands against." Run 6 showed agent variance — sometimes the cwd is treated as in scope (sc 1), sometimes not (sc 11, 13). The user invokes `/wrap` from somewhere with intent; that cwd should be implicitly in scope.
+
+**Fix:** add to Phase 1: *"The repo containing the cwd at the time `/wrap` is invoked is implicitly in scope. Phase 1's recall step then determines what *additional* repos beyond the cwd were touched."*
+
+**Effort:** tiny — one sentence in `SKILL.md` Phase 1.
+
+#### 4. Phase 3b orchestrator-inline must load `plan-classification.md` (Run 6 finding)
+
+**What:** when the orchestrator does Phase 3b inline (skip-fan-out for trivial volumes), it doesn't currently load `references/plan-classification.md`. That reference contains the per-state action table and the "Common mistakes to avoid" section that fixes the conservative-keep drift. Without the reference loaded, the orchestrator operates on `SKILL.md` prose alone and falls back to defensive choices (e.g., archive instead of delete for Completed-tracked plans, as in Run 6 scenario 6).
+
+**Fix:** add to `SKILL.md` Phase 3b: *"When the orchestrator does 3b inline (skip-fan-out), it MUST still `Read references/plan-classification.md` first — the per-state action table and 'Common mistakes' section are required."*
+
+**Effort:** tiny — one sentence in `SKILL.md` Phase 3b.
+
+#### 5. Phase 3d AskUserQuestion missing `(b)ranch-off-and-commit` option (Run 6 finding)
+
+**What:** Run 6 scenario 2 showed Phase 3d's AskUserQuestion offered 4 options (`Push`, `Commit only`, `Stash`, `Leave as-is`) but the SKILL.md spec lists 5 — the `(b)ranch-off-and-commit` path was dropped. The plain-text fallback also omitted it.
+
+**Fix:** decide whether the spec should require all 5 unconditionally or explicitly document which drops are acceptable. Currently the prose is ambiguous. If conditional, codify the heuristic (e.g., "drop branch-off when on `main` with no parallel work").
+
+**Effort:** small — one or two paragraphs in `SKILL.md` Phase 3d, depending on which direction is chosen.
+
+#### 6. Pressure-scenario 11 setup needs a touch (Run 6 finding)
+
+**What:** scenario 11 currently expects Phase 3c to flag `build-once.ps1` for deletion while preserving `keep-me.ps1` (KEEP marker). Under Phase 1's strict "touched-repo" rule, a session that *only* invokes `/wrap` doesn't put the repo in scope, so Phase 3c never engages. (See Run 6 scenario 11 evidence.)
+
+**Fix:** either (a) update scenario 11's prompt to first edit something in the repo (e.g., README typo), then `/wrap`; OR (b) implement the Phase 1 fix in Open #0 (cwd implicitly in scope), which retires this issue automatically.
+
+**Effort:** tiny — one prompt update in `docs/pressure-scenarios.md`, or rely on the #0 fix.
+
+#### 7. Multi-repo Phase 0 fork — future scenario candidate (Run 6 deferral)
+
+**What:** Run 6 didn't exercise Phase 0's fork in a multi-repo session. The skill's "single AskUserQuestion batch" instruction implies one whole-session decision regardless of repo count, but no test verifies this. Worth a scenario when test infrastructure for multi-repo fixtures is in place.
+
+**Effort:** medium — needs a multi-repo fixture + prompt that lists asks across 2–3 repos.
+
+#### 1. Package wrap as an installable Claude Code plugin
 
 #### 1. Package wrap as an installable Claude Code plugin
 
