@@ -70,9 +70,9 @@ No automated runner — these are manually triggered by running `/wrap` in a ses
 
 **Setup:** 3 touched repos. During Phase 3 of repo #2, press `Ctrl+C` or say "stop".
 
-**Expected:** Already-committed work in repo #1 and partial work in repo #2 stays intact. Phase 4 summary shows "completed: repo 1 (all phases); partial: repo 2 (through sub-phase 3a); not reached: repo 3".
+**Expected:** Already-committed work in repo #1 and partial work in repo #2 stays intact. Phase 4 summary shows "completed: repo 1 (all phases); partial: repo 2 (through sub-phase 3a); not reached: repo 3". Summary ends with the **interrupted sentinel** ("That was an interrupted /wrap..."), not the completion sentinel.
 
-**Pass criteria:** No data loss. Summary is accurate about what completed vs what didn't.
+**Pass criteria:** No data loss. Summary is accurate about what completed vs what didn't. The closing line is the interrupted sentinel — emitting "Go ahead and close the session" on a cancelled run is an explicit failure.
 
 ### 9. Session touched a non-git-repo directory
 

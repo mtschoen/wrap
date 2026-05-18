@@ -189,11 +189,17 @@ Keep the summary terse — specific numbers, specific paths, specific decisions.
 
 **Empty case:** If Phases 0–3 found nothing (clean state, idempotent re-run, or genuinely-quiet session), the entire summary is one or two lines: *"Nothing to wrap. \<repo names\> are clean, no memory items to offload, no background processes running."* Do not pad with bullet points for empty categories. Per principle 8, the empty path is a valid pass — emit it directly and exit.
 
-**Closing sentinel (mandatory, every path).** The very last line of the Phase 4 summary — normal, empty, cancelled, or partial-failure — MUST be this exact line on its own:
+**Closing sentinel (mandatory, every path).** The very last line of the Phase 4 summary MUST be a sentinel marker. Which sentinel depends on whether the wrap ran to its natural end or was cancelled/interrupted partway:
 
-> That's a /wrap. Go ahead and close the session.
+- **Completed wrap** (normal, empty, or proceeded through all phases despite per-repo failures):
 
-This is a session-end marker so the user can distinguish a real `/wrap` from a wrap-ish near-end message when reviewing transcripts later. No variations, no embellishments, no emoji. Even if the wrap was cancelled or hit failures, the sentinel still appears as the final line — its job is "this was a real wrap procedure run to its end," not "everything succeeded."
+  > That's a /wrap. Go ahead and close the session.
+
+- **Cancelled or interrupted wrap** (user stopped the wrap mid-procedure, denied a critical `AskUserQuestion`, or the wrap aborted before reaching Phase 4 on its own):
+
+  > That was an interrupted /wrap. The session is NOT in a clean wrap state — some items may still be dirty, uncommitted, or unsaved.
+
+The two sentinels are distinct on purpose: the "go ahead and close" line is the user's signal that the wrap procedure ran to its end. An interrupted wrap must **NOT** emit that line — it would falsely tell the user the session is safely closeable when it isn't. The interrupted sentinel makes the partial state explicit instead. No variations, no embellishments, no emoji on either. Pick one and only one; both are session-end markers so the transcript shows what actually happened.
 
 ## Failure handling
 
@@ -202,7 +208,7 @@ This is a session-end marker so the user can distinguish a real `/wrap` from a w
 - **Subagent failure / timeout:** treat as "no findings for this bucket." The orchestrator may fall back to doing 3b/3c directly for the affected repos (principle 9), or skip with a note in the Phase 4 summary. Never silently lose a repo from the wrap.
 - **Subagent over-claim:** if Phase 4's spot-check finds a subagent reported a commit / write / deletion that didn't actually happen, correct the summary and execute the missing action inline if still appropriate.
 - **Destructive-action gate:** deletes and archives run only after memory offload succeeds for that repo.
-- **User cancel (`Ctrl+C` / stop):** whatever was already approved + executed stays done. Print a "cancelled — completed: X / pending: Y" summary immediately. Cancellation also stops any in-flight subagents — wrap does not leave wrap-spawned subagents running after the user cancels.
+- **User cancel (`Ctrl+C` / stop / denied AskUserQuestion):** whatever was already approved + executed stays done. Print a "cancelled — completed: X / pending: Y" summary immediately, ending with the **interrupted sentinel** (see Phase 4) — never the "go ahead and close" line. Cancellation also stops any in-flight subagents — wrap does not leave wrap-spawned subagents running after the user cancels.
 - **Git errors:**
   - Merge conflict on wrap's auto-commit → stash wrap's edits, leave user work alone, record the conflict in the summary.
   - Non-fast-forward push rejection → never force-push; report and continue.
